@@ -463,14 +463,29 @@ export class RagService {
   }
 
   private async convertPDFtoImages(filebuffer: Buffer): Promise<Buffer[]> {
-    const converted = await fromBuffer(filebuffer, {
-      quality: 50,
-      density: 200,
-      format: 'png',
-    }).bulk(-1, {
-      responseType: 'buffer',
-    })
-    return converted.filter((res) => res.buffer).map((res) => res.buffer!)
+    try {
+      const converted = await fromBuffer(filebuffer, {
+        quality: 50,
+        density: 200,
+        format: 'png',
+      }).bulk(-1, {
+        responseType: 'buffer',
+      })
+      const images = converted.filter((res) => res.buffer).map((res) => res.buffer!)
+      if (images.length > 0) return images
+    } catch (error) {
+      // pdf2pic shells out to GraphicsMagick + Ghostscript, which the Docker image ships but a
+      // native (e.g. Windows) install doesn't have. Fall through to pdf.js rendering.
+      logger.debug(`[RAG] pdf2pic unavailable (${error instanceof Error ? error.message : error}); rendering with pdf.js`)
+    }
+    // Pure JS/WASM path: pdf.js via pdf-parse, rasterised with @napi-rs/canvas (~200 DPI).
+    const parser = new PDFParse({ data: filebuffer })
+    try {
+      const shots = await parser.getScreenshot({ scale: 200 / 72, imageBuffer: true, imageDataUrl: false })
+      return shots.pages.filter((p) => p.data?.length).map((p) => Buffer.from(p.data))
+    } finally {
+      await parser.destroy()
+    }
   }
 
   private async extractPDFText(filebuffer: Buffer): Promise<string> {
