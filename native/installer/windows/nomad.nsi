@@ -27,6 +27,9 @@ SetCompressorDictSize 64
 !ifndef STAGE
   !error "Pass /DSTAGE=<folder produced by native/scripts/stage-app.mjs + fetch-windows-runtimes.mjs>"
 !endif
+!ifndef REDIST
+  !define REDIST "${STAGE}\..\redist"
+!endif
 !ifndef OUTFILE
   !define OUTFILE "ProjectNOMAD-Setup-${VERSION}.exe"
 !endif
@@ -159,6 +162,19 @@ Section "Project NOMAD (required)" SecCore
   SetRegView 64
 
   !insertmacro StopNomad
+
+  ; Microsoft Visual C++ 2015-2022 runtime, needed by the native app builds (Qdrant, Ollama, ...).
+  ; Idempotent: upgrades an older runtime, no-op if current. 3010 = installed, reboot pending.
+  DetailPrint "Installing the Microsoft Visual C++ runtime..."
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File "${REDIST}\vc_redist.x64.exe"
+  nsExec::ExecToLog '"$PLUGINSDIR\vc_redist.x64.exe" /install /quiet /norestart'
+  Pop $0
+  DetailPrint "Visual C++ runtime setup finished (code $0)"
+
+  ; Python-based apps (Kolibri, FlatNotes) unpack deep folder trees; allow paths over 260 chars.
+  WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
 
   ; Replace program folders. app\storage is a junction to the user's data: remove the link
   ; itself first so deleting the old app folder can never touch content.

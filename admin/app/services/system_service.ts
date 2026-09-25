@@ -694,14 +694,14 @@ export class SystemService {
           { headers: { Accept: 'application/vnd.github+json' }, timeout: 5000 }
         )
         if (!response?.data?.length) throw new Error('No releases found')
-        latestVersion = response.data[0].tag_name.replace(/^v/, '').trim()
+        latestVersion = response.data[0].tag_name.replace(/^(windows-)?v/i, '').trim()
       } else {
         const response = await axios.get(
           `${releasesApiUrl()}/latest`,
           { headers: { Accept: 'application/vnd.github+json' }, timeout: 5000 }
         )
         if (!response?.data?.tag_name) throw new Error('Invalid response from GitHub API')
-        latestVersion = response.data.tag_name.replace(/^v/, '').trim()
+        latestVersion = response.data.tag_name.replace(/^(windows-)?v/i, '').trim()
       }
 
       logger.info(`Current version: ${currentVersion}, Latest version: ${latestVersion}`)

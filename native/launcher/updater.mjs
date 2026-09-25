@@ -34,8 +34,8 @@ export function startUpdater({ paths, cfg, log, currentVersion }) {
     const pending = await readJson(pendingFile)
     if (!pending) return
     await rm(pendingFile, { force: true })
-    const want = String(pending.version || '').replace(/^v/, '')
-    if (want && currentVersion && want === String(currentVersion).replace(/^v/, '')) {
+    const want = String(pending.version || '').replace(/^(windows-)?v/i, '')
+    if (want && currentVersion && want === String(currentVersion).replace(/^(windows-)?v/i, '')) {
       await ulog(`Now running ${currentVersion} — update complete`)
       await status('complete', 100, 'System update completed successfully')
     } else {
@@ -55,10 +55,18 @@ export function startUpdater({ paths, cfg, log, currentVersion }) {
       return
     }
 
-    const api = `https://api.github.com/repos/${cfg.releasesRepo}/releases/${tag === 'latest' ? 'latest' : `tags/${tag}`}`
+    // Native releases may be tagged vX.Y.Z or windows-vX.Y.Z; accept either for the requested version.
+    const base = `https://api.github.com/repos/${cfg.releasesRepo}/releases`
     let release
     try {
-      release = await fetchJson(api, { headers: githubHeaders(), timeout: 30000 })
+      if (tag === 'latest') {
+        release = await fetchJson(`${base}/latest`, { headers: githubHeaders(), timeout: 30000 })
+      } else {
+        const version = tag.replace(/^(windows-)?v/i, '')
+        const list = await fetchJson(`${base}?per_page=100`, { headers: githubHeaders(), timeout: 30000 })
+        release = list.find((r) => !r.draft && r.tag_name.replace(/^(windows-)?v/i, '') === version)
+        if (!release) throw new Error(`no release for version ${version}`)
+      }
     } catch (err) {
       await ulog(`Could not read release ${tag} from ${cfg.releasesRepo}: ${err.message}`)
       await status('error', 0, 'Could not find the release on GitHub - check logs')

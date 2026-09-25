@@ -251,7 +251,8 @@ export class AutoUpdateService {
     const candidates = releases
       .filter((r) => r && !r.draft && !r.prerelease && r.tag_name && r.published_at)
       .map((r) => ({
-        version: String(r.tag_name).replace(/^v/, '').trim(),
+        // Native (Windows) builds are tagged windows-vX.Y.Z; Docker builds vX.Y.Z.
+        version: String(r.tag_name).replace(/^(windows-)?v/i, '').trim(),
         publishedAt: String(r.published_at),
       }))
       .filter((r) => SEMVER_TAG.test(r.version))

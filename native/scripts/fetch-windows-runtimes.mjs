@@ -209,10 +209,24 @@ async function winsw() {
   throw lastErr
 }
 
+// ── Visual C++ Redistributable ─────────────────────────────────────────────
+// Native Windows builds of the apps (Qdrant, Ollama, Kiwix, ...) are compiled with MSVC and need
+// the VC++ 2015-2022 runtime, which a fresh Windows install may lack. Microsoft permits
+// redistributing vc_redist.x64.exe; the installer runs it silently. Kept outside the staged
+// program files (<out>/../redist) because it's only needed during setup.
+async function vcredist() {
+  console.log('Visual C++ 2015-2022 Redistributable (x64)')
+  const dest = path.join(out, '..', 'redist')
+  await mkdir(dest, { recursive: true })
+  const file = await fetchTo('https://aka.ms/vs/17/release/vc_redist.x64.exe', 'vc_redist.x64.exe')
+  await copyFile(file, path.join(dest, 'vc_redist.x64.exe'))
+  versions.vcredist = 'latest (aka.ms/vs/17/release)'
+}
+
 await mkdir(runtime, { recursive: true })
 await mkdir(licenses, { recursive: true })
 await mkdir(cache, { recursive: true })
-for (const step of [node, mariadb, redis, pmtiles, winsw]) await step()
+for (const step of [node, mariadb, redis, pmtiles, winsw, vcredist]) await step()
 
 // LICENSE.txt shown by the installer: NOMAD's license followed by the bundled components.
 const apache = await readFile(path.join(repo, 'LICENSE'), 'utf8')
