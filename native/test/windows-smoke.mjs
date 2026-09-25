@@ -121,7 +121,8 @@ await step('dashboard health', async () => {
 })
 await step('dashboard pages render', async () => {
   for (const p of ['/home', '/supply-depot', '/settings/system', '/easy-setup', '/maps', '/docs/home']) {
-    const r = await http('GET', p)
+    // The first /maps visit downloads the base map assets inside the request.
+    const r = await http('GET', p, null, { timeout: 180000 })
     if (r.status >= 400) throw new Error(`${p} → HTTP ${r.status}`)
   }
   return 'home, supply depot, system, easy setup, maps, docs'
