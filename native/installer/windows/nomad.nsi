@@ -121,8 +121,10 @@ Var NoStart
 ; (a running node.exe/mariadbd.exe would lock files we are about to replace or delete).
 !macro StopNomad
   ${If} ${FileExists} "${SERVICE_EXE}"
-    DetailPrint "Stopping the Project NOMAD service (this can take up to a minute)..."
-    nsExec::ExecToLog '"${SERVICE_EXE}" stop'
+    ; Let NOMAD shut down cleanly (the database and cache flush their data) before anything is
+    ; removed; WinSW force-stops it after its own 120 s stoptimeout, so this wait is bounded.
+    DetailPrint "Stopping the Project NOMAD service (this can take up to two minutes)..."
+    nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$$s = Get-Service ProjectNOMAD -ErrorAction SilentlyContinue; if ($$s -and $$s.Status -ne 'Stopped') { Stop-Service ProjectNOMAD -NoWait -ErrorAction SilentlyContinue; try { $$s.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(180)) } catch {} }"`
     Pop $0
     nsExec::ExecToLog '"${SERVICE_EXE}" uninstall'
     Pop $0

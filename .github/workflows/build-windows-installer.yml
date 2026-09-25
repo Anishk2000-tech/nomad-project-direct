@@ -223,8 +223,21 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: pwsh
         run: |
-          Start-Process 'C:\Program Files\Project NOMAD\Uninstall Project NOMAD.exe' -ArgumentList '/S' -Wait
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          (Start-Process 'C:\Program Files\Project NOMAD\Uninstall Project NOMAD.exe' -ArgumentList '/S' -PassThru).WaitForExit()
+          # NSIS runs the real uninstaller from a temporary copy (%TEMP%\~nsu*.tmp); follow that one.
+          $un = { @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*\~nsu*' }) }
+          for ($i = 1; (& $un).Count -and $i -le 600; $i++) {
+            if ($i % 30 -eq 0) {
+              Write-Host "[$([int]$sw.Elapsed.TotalSeconds)s] uninstalling; service: $((Get-Service ProjectNOMAD -ErrorAction SilentlyContinue).Status)"
+              $ids = (& $un).ProcessId
+              Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -in $ids } | ForEach-Object { Write-Host "    running: $($_.CommandLine)" }
+            }
+            Start-Sleep 1
+          }
           for ($i = 0; $i -lt 60 -and (Test-Path 'C:\Program Files\Project NOMAD\service'); $i++) { Start-Sleep 2 }
+          Write-Host "Uninstaller finished after $([int]$sw.Elapsed.TotalSeconds)s"
+          if ((& $un).Count) { throw 'uninstaller still running after 10 minutes' }
           if (Get-Service ProjectNOMAD -ErrorAction SilentlyContinue) { throw 'service still registered' }
           if (Test-Path 'C:\Program Files\Project NOMAD\service') { throw 'program files not removed' }
           if (-not (Test-Path 'C:\NOMADData\storage\zim')) { throw 'user data was deleted' }
