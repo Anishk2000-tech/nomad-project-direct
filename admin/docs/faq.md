@@ -16,6 +16,8 @@ Debian-based Linux. **Ubuntu 26.04 LTS is what we recommend and test on** for ne
 
 Ubuntu 24.04 LTS and Debian 12 are also supported, so there is no need to reinstall if you are already on one of those. Windows users can follow the [WSL2 guide](https://www.projectnomad.us/install/wsl2), which is community-supported.
 
+There is also a **Windows edition that needs no Docker or WSL**: a single installer (`ProjectNOMAD-Setup-<version>.exe`) for 64-bit Windows 10/11 that runs NOMAD as a Windows service and its apps as native Windows programs. A few Supply Depot apps without Windows builds (Vaultwarden, Stirling PDF, Calibre-Web, Homebox, Jellyfin) and custom Docker apps aren't available there. See `native/README.md` in the repository.
+
 macOS and non-Debian distributions like Fedora or Arch are not officially supported. NOMAD does not need a desktop environment, so Ubuntu Server is a fine choice if you are comfortable at the terminal.
 
 For a full walkthrough including the Ubuntu install itself, see the [Installation Guide](https://www.projectnomad.us/install).
@@ -287,6 +289,14 @@ curl -fsSL https://raw.githubusercontent.com/Crosstalk-Solutions/project-nomad/r
 sudo bash uninstall_nomad.sh
 ```
 *Warning: This cannot be undone. All data will be deleted.*
+
+**Windows edition (no Docker):** there are no shell scripts. Use the Start menu entries instead:
+- **NOMAD Status** — shows whether NOMAD and each app are running
+- **Restart NOMAD** — restarts the Project NOMAD Windows service (or use `services.msc`)
+- **NOMAD Logs** — opens the log viewer at http://localhost:9999
+- **Uninstall Project NOMAD** — removes the program; you choose whether to keep your data folder
+
+To update, run the newer installer (your data is kept) or use Settings → Check for Updates.
 
 ---
 
