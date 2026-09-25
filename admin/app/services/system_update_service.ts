@@ -12,7 +12,9 @@ interface UpdateStatus {
 }
 
 export class SystemUpdateService {
-  private static SHARED_DIR = '/app/update-shared'
+  // Docker: a volume shared with the updater sidecar. Native edition: a folder the Windows
+  // supervisor watches, which performs the update by running the newer installer.
+  private static SHARED_DIR = process.env.NOMAD_UPDATE_SHARED_DIR || '/app/update-shared'
   private static REQUEST_FILE = join(SystemUpdateService.SHARED_DIR, 'update-request')
   private static STATUS_FILE = join(SystemUpdateService.SHARED_DIR, 'update-status')
   private static LOG_FILE = join(SystemUpdateService.SHARED_DIR, 'update-log')

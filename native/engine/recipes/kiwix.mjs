@@ -54,8 +54,11 @@ export default {
 
   async launch(ctx) {
     const bin = await requireFile(ctx.image.dir, [exe('kiwix-serve')], 'kiwix-serve')
-    const cmd = ctx.cmd.length ? ctx.cmd : ['--library', '/data/kiwix-library.xml', '--monitorLibrary', '--address=all']
-    const args = ctx.translateArgs(cmd)
+    const cmd = ctx.cmd.length ? ctx.cmd : ['--library', '/data/kiwix-library.xml', '--monitorLibrary']
+    // Docker passes --address=all so kiwix listens on IPv4+IPv6 inside the container. Natively,
+    // kiwix-serve's default already listens on every interface, and releases older than 3.7
+    // reject "all" as an address, so leave the flag out.
+    const args = ctx.translateArgs(cmd.filter((a) => a !== '--address=all'))
     if (!args.some((a) => a === '-p' || a.startsWith('--port'))) args.push(`--port=${ctx.hostPort(8080) ?? 8080}`)
     return { command: bin, args, cwd: ctx.container.dataDir }
   },

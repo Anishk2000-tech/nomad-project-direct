@@ -1,4 +1,6 @@
-export const PMTILES_BINARY_PATH = '/usr/local/bin/pmtiles'
+// Docker image path by default; the native edition bundles its own build (pmtiles.exe on
+// Windows) and points PMTILES_BINARY_PATH at it.
+export const PMTILES_BINARY_PATH = process.env.PMTILES_BINARY_PATH || '/usr/local/bin/pmtiles'
 
 // Clamp these so a user can't ask for nonsense that never extracts
 export const EXTRACT_MIN_ZOOM = 0

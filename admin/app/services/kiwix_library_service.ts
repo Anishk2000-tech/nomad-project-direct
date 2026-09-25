@@ -1,12 +1,23 @@
 import { XMLBuilder, XMLParser } from 'fast-xml-parser'
 import { readFile, writeFile, rename, readdir } from 'fs/promises'
 import { join } from 'path'
-import { Archive } from '@openzim/libzim'
+import { Archive } from '../utils/libzim.js'
 import { KIWIX_LIBRARY_XML_PATH, ZIM_STORAGE_PATH, ensureDirectoryExists, isValidZimFile } from '../utils/fs.js'
 import logger from '@adonisjs/core/services/logger'
 import { randomUUID } from 'node:crypto'
+import { isNativeRuntime } from '../utils/native_runtime.js'
 
 const CONTAINER_DATA_PATH = '/data'
+
+/**
+ * The `path` recorded for a ZIM in the library XML. Docker: the file's path inside the kiwix
+ * container (/data/<file>). Native edition: the bare file name — kiwix-serve resolves relative
+ * paths against the library file's own folder, whereas on Windows libkiwix would treat
+ * "/data/<file>" as relative too (no drive letter) and look in the wrong place.
+ */
+function bookPath(filename: string): string {
+  return isNativeRuntime() ? filename : `${CONTAINER_DATA_PATH}/${filename}`
+}
 const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>\n'
 
 interface KiwixBook {
@@ -272,7 +283,7 @@ export class KiwixLibraryService {
         logger.warn(`[KiwixLibraryService] Skipping unreadable ZIM file: ${filename}`)
         continue
       }
-      const containerPath = `${CONTAINER_DATA_PATH}/${filename}`
+      const containerPath = bookPath(filename)
       books.push({
         ...meta,
         // Override fields that must be derived locally, not from ZIM metadata
@@ -290,7 +301,7 @@ export class KiwixLibraryService {
 
   async addBook(filename: string): Promise<void> {
     const zimFilename = filename.endsWith('.zim') ? filename : `${filename}.zim`
-    const containerPath = `${CONTAINER_DATA_PATH}/${zimFilename}`
+    const containerPath = bookPath(zimFilename)
 
     const filePath = this.getLibraryFilePath()
     let existingBooks: KiwixBook[] = []
@@ -334,7 +345,7 @@ export class KiwixLibraryService {
 
   async removeBook(filename: string): Promise<void> {
     const zimFilename = filename.endsWith('.zim') ? filename : `${filename}.zim`
-    const containerPath = `${CONTAINER_DATA_PATH}/${zimFilename}`
+    const containerPath = bookPath(zimFilename)
 
     const filePath = this.getLibraryFilePath()
     let existingBooks: KiwixBook[] = []

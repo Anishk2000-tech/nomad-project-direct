@@ -32,7 +32,7 @@ pre{flex:1;margin:0;padding:12px 16px;overflow:auto;font:12px/1.5 ui-monospace,C
 let current=null;const out=document.getElementById('out');
 async function j(u){const r=await fetch(u);return r.json()}
 function item(label,status,key){const b=document.createElement('button');b.className='item';b.dataset.key=key;
- b.innerHTML='<span></span><span class="st"></span>';b.children[0].textContent=label;b.children[1].textContent=status||'';b.children[1].classList.add(status||'');
+ b.innerHTML='<span></span><span class="st"></span>';b.children[0].textContent=label;b.children[1].textContent=status||'';if(status)b.children[1].classList.add(status);
  b.onclick=()=>{current=key;document.querySelectorAll('.item').forEach(x=>x.classList.toggle('active',x===b));document.getElementById('title').textContent=label;load(true)};return b}
 async function lists(){const [apps,sys]=await Promise.all([j('api/containers'),j('api/system')]);
  const a=document.getElementById('apps');a.replaceChildren(...apps.map(c=>item(c.name,c.state,'c/'+c.id)));

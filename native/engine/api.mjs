@@ -11,7 +11,8 @@ import { timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { EngineError, isWin, removeWithRetry } from './lib/util.mjs'
 import { ensureSelfSignedCert } from './lib/selfsigned.mjs'
-import { supportInfo } from './recipes/index.mjs'
+import { findRecipe, supportInfo } from './recipes/index.mjs'
+import { normalizeRef } from './images.mjs'
 
 const execFileAsync = promisify(execFile)
 export const ENGINE_VERSION = '1.0.0'
@@ -306,6 +307,19 @@ export function createApiServer(engine) {
       })
     }
     if (p === '/nomad/support' && m === 'GET') return send(res, 200, supportInfo())
+    if (p === '/nomad/support/check' && m === 'POST') {
+      const body = await readBody(req)
+      const results = {}
+      for (const image of Array.isArray(body.images) ? body.images : []) {
+        try {
+          findRecipe(normalizeRef(String(image)).repo)
+          results[image] = { supported: true }
+        } catch (err) {
+          results[image] = { supported: false, reason: err.message }
+        }
+      }
+      return send(res, 200, { results })
+    }
     if (p === '/nomad/selfsigned' && m === 'POST') {
       const body = await readBody(req)
       const dir = path.resolve(String(body.dir || ''))

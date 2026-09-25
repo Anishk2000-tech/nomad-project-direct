@@ -127,14 +127,16 @@ export function humanDuration(ms) {
 }
 
 export class Logger {
-  constructor(scope, level = process.env.NOMAD_LOG_LEVEL || 'info') {
+  /** `sink(line, level)` receives formatted lines; default writes to stdout/stderr. */
+  constructor(scope, level = process.env.NOMAD_LOG_LEVEL || 'info', sink = null) {
     this.scope = scope
     this.levels = { debug: 10, info: 20, warn: 30, error: 40 }
     this.threshold = this.levels[level] ?? 20
+    this.sink = sink
   }
 
   child(scope) {
-    const l = new Logger(`${this.scope}:${scope}`)
+    const l = new Logger(`${this.scope}:${scope}`, 'info', this.sink)
     l.threshold = this.threshold
     return l
   }
@@ -145,7 +147,8 @@ export class Logger {
       .map((a) => (a instanceof Error ? a.stack || a.message : typeof a === 'string' ? a : JSON.stringify(a)))
       .join(' ')
     const line = `${nowIso()} [${level.toUpperCase()}] [${this.scope}] ${msg}`
-    if (level === 'error' || level === 'warn') process.stderr.write(line + '\n')
+    if (this.sink) this.sink(line, level)
+    else if (level === 'error' || level === 'warn') process.stderr.write(line + '\n')
     else process.stdout.write(line + '\n')
   }
 

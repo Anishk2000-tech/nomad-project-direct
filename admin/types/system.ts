@@ -24,6 +24,7 @@ export type SystemInformationResponse = {
 export type UsePageProps = {
   appVersion: string
   environment: string
+  nativeRuntime?: boolean
 }
 
 export type LSBlockDevice = {

@@ -10,6 +10,7 @@ import { SystemService } from '#services/system_service'
 import { SystemUpdateService } from '#services/system_update_service'
 import { ContainerRegistryService } from '#services/container_registry_service'
 import { isNewerVersion, parseMajorVersion } from '../utils/version.js'
+import { isNativeRuntime, releasesApiUrl } from '../utils/native_runtime.js'
 import { isWithinWindow as isWithinWindowUtil } from '../utils/update_window.js'
 import {
   checkImageDiskSpace,
@@ -19,7 +20,7 @@ import {
 
 /** Docker image repository for the NOMAD admin/core image (tag applied per-release). */
 const NOMAD_IMAGE_REPO = 'ghcr.io/crosstalk-solutions/project-nomad'
-const RELEASES_URL = 'https://api.github.com/repos/Crosstalk-Solutions/project-nomad/releases'
+const RELEASES_URL = releasesApiUrl()
 
 /** Defaults for user-configurable settings (server-local time window + cool-off). */
 const DEFAULT_WINDOW_START = '02:00'
@@ -329,6 +330,8 @@ export class AutoUpdateService {
 
   /** Returns a disk blocker if free space is insufficient, otherwise null. */
   private async checkDiskSpace(targetTag: string): Promise<Blocker | null> {
+    // The native edition updates from an installer, not a container image.
+    if (isNativeRuntime()) return null
     const hostArch = await this.getHostArch()
     return checkImageDiskSpace({
       image: `${NOMAD_IMAGE_REPO}:${targetTag}`,

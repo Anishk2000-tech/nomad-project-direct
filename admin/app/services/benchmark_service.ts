@@ -38,6 +38,7 @@ import { SERVICE_NAMES } from '../../constants/service_names.js'
 import { BROADCAST_CHANNELS } from '../../constants/broadcast.js'
 import { BenchmarkTelemetrySampler } from './benchmark_telemetry.js'
 import Dockerode from 'dockerode'
+import { isNativeRuntime } from '../utils/native_runtime.js'
 
 // HMAC secret for signing submissions to the benchmark repository
 // This provides basic protection against casual API abuse.
@@ -332,6 +333,15 @@ export class BenchmarkService {
 
     if (result.submitted_to_repository) {
       throw new Error('Benchmark result has already been submitted')
+    }
+
+    // The native (Docker-free) edition runs a JavaScript port of the sysbench tests, whose
+    // numbers are not comparable with the leaderboard's real sysbench results.
+    if (isNativeRuntime()) {
+      throw new Error(
+        'Benchmarks from the native (Docker-free) edition of NOMAD use a JavaScript port of the system tests, ' +
+          'so they can\'t be compared with community leaderboard results. Your results are still saved here for comparing your own machines.'
+      )
     }
 
     // Remote inference cannot be attributed to this machine.

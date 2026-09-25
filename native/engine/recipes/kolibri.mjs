@@ -45,6 +45,8 @@ export default {
         KOLIBRI_HOME: home,
         KOLIBRI_HTTP_PORT: String(port),
         KOLIBRI_ZIP_CONTENT_PORT: zipPort,
+        // NOMAD is offline-first with no telemetry (the catalog disables Qdrant's too).
+        KOLIBRI_DISABLE_PING: '1',
       },
       cwd: ctx.container.dataDir,
       mkdirs: [home],
