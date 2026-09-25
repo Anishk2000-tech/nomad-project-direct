@@ -36,7 +36,14 @@ export function parseArgs(argv = process.argv.slice(2)) {
  */
 export function resolvePaths(args = parseArgs()) {
   const installDir = path.resolve(args['install-dir'] || process.env.NOMAD_INSTALL_DIR || path.join(HERE, '..', '..'))
-  const home = path.resolve(args.home || process.env.NOMAD_HOME || (isWin ? 'C:\\ProjectNOMAD' : path.join(installDir, 'nomad-home')))
+  // The installer records the data folder the user chose in <install>/data-location.txt.
+  let recorded = null
+  try {
+    recorded = readFileSync(path.join(installDir, 'data-location.txt'), 'utf8').replace(/^\uFEFF/, '').trim() || null
+  } catch {}
+  const home = path.resolve(
+    args.home || process.env.NOMAD_HOME || recorded || (isWin ? 'C:\\ProjectNOMAD' : path.join(installDir, 'nomad-home'))
+  )
   const appDir = path.resolve(args['app-dir'] || process.env.NOMAD_APP_DIR || path.join(installDir, 'app'))
   return {
     installDir,

@@ -2,6 +2,7 @@
 // Control utility for a native NOMAD install.
 //   nomadctl stop     graceful shutdown (used as the Windows service's stop command)
 //   nomadctl status   show component and app status
+//   nomadctl wait     wait until the dashboard answers (--timeout seconds, default 300)
 //   nomadctl open     open the NOMAD dashboard in the default browser
 //   nomadctl logs     open the log viewer
 import path from 'node:path'
@@ -69,11 +70,28 @@ if (command === 'stop') {
   } catch (err) {
     console.log(`Engine: not running (${err.message})`)
   }
+} else if (command === 'wait') {
+  // Block until the dashboard answers (used by the installer after starting the service).
+  const timeoutSec = Number(args.timeout || 300)
+  const deadline = Date.now() + timeoutSec * 1000
+  let ok = false
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${cfg.http?.port ?? 8080}/api/health`, { signal: AbortSignal.timeout(3000) })
+      if (res.ok) {
+        ok = true
+        break
+      }
+    } catch {}
+    await sleep(2000)
+  }
+  console.log(ok ? `Project NOMAD is running at ${webUrl}` : `Project NOMAD did not respond within ${timeoutSec}s — see ${path.join(paths.logsDir, 'supervisor.log')}`)
+  process.exit(ok ? 0 : 1)
 } else if (command === 'open') {
   openUrl(webUrl)
 } else if (command === 'logs') {
   openUrl(`http://localhost:${cfg.logsUi?.port ?? 9999}`)
 } else {
-  console.log('Usage: nomadctl <stop|status|open|logs> [--home <data dir>]')
+  console.log('Usage: nomadctl <stop|status|wait|open|logs> [--home <data dir>] [--timeout <seconds>]')
   process.exit(2)
 }

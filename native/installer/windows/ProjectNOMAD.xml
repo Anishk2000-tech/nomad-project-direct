@@ -1,0 +1,34 @@
+<!--
+  Windows service definition for Project NOMAD (WinSW 2.x).
+  The service runs the NOMAD supervisor with the bundled Node.js; the supervisor starts MariaDB,
+  Redis, the native app engine and the web dashboard. The data folder is read from
+  ..\data-location.txt (written by the installer).
+-->
+<service>
+  <id>ProjectNOMAD</id>
+  <name>Project NOMAD</name>
+  <description>Project NOMAD offline knowledge server (Docker-free Windows edition). Dashboard: http://localhost:8080</description>
+
+  <executable>%BASE%\..\runtime\node\node.exe</executable>
+  <arguments>"%BASE%\..\native\launcher\supervisor.mjs" --install-dir "%BASE%\.."</arguments>
+  <workingdirectory>%BASE%\..</workingdirectory>
+
+  <!-- Graceful stop: ask the supervisor to shut everything down cleanly (databases flush to disk). -->
+  <stopexecutable>%BASE%\..\runtime\node\node.exe</stopexecutable>
+  <stoparguments>"%BASE%\..\native\launcher\nomadctl.mjs" stop --install-dir "%BASE%\.."</stoparguments>
+  <stoptimeout>120 sec</stoptimeout>
+
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+</service>
