@@ -98,6 +98,11 @@ jobs:
           & dist\stage\runtime\redis\redis-server.exe --version
           & dist\stage\runtime\mariadb\bin\mariadbd.exe --version
           & dist\stage\runtime\pmtiles\pmtiles.exe version
+          # The bundled kiwix-tools build must start too (it's what the Information Library runs).
+          $kz = Get-ChildItem dist\stage\runtime\seed\kiwix-tools_win-*.zip | Select-Object -First 1
+          if (-not $kz) { throw 'kiwix-tools was not bundled' }
+          Expand-Archive $kz.FullName -DestinationPath $env:RUNNER_TEMP\kiwix-check -Force
+          & (Get-ChildItem $env:RUNNER_TEMP\kiwix-check -Recurse -Filter kiwix-serve.exe | Select-Object -First 1).FullName --version
           Get-Content dist\stage\runtime\versions.json
 
       - name: Prune files not needed at runtime

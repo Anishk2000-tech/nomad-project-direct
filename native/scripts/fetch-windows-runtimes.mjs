@@ -4,17 +4,20 @@
 //   runtime/mariadb  MariaDB LTS (MySQL-compatible database)
 //   runtime/redis    Redis for Windows (job queues)
 //   runtime/pmtiles  go-pmtiles (offline map extracts)
+//   runtime/seed     kiwix-tools for Windows, so the Information Library installs offline
 //   service/ProjectNOMAD.exe   WinSW service wrapper
 // plus LICENSE.txt / licenses/ with the third-party notices.
 //
 //   node native/scripts/fetch-windows-runtimes.mjs --out <stage dir>
 //        [--mariadb-series 11.4] [--pmtiles 1.30.2] [--winsw v2.12.0] [--node v22.x.y]
+//        [--kiwix 3.8.1 (default: the version pinned in the service seeder)]
 import path from 'node:path'
 import { cp, mkdir, readdir, readFile, rm, writeFile, copyFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { downloadFile, fetchJson, fetchText, githubHeaders, hashFile } from '../engine/lib/download.mjs'
 import { extractArchive } from '../engine/lib/archive.mjs'
 import { compareVersions, pathExists } from '../engine/lib/util.mjs'
+import { fetchKiwixListing, pickKiwixBuild } from '../engine/recipes/kiwix.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -187,6 +190,33 @@ async function pmtiles() {
   versions.pmtiles = v
 }
 
+// ── kiwix-tools ────────────────────────────────────────────────────────────
+// The Information Library is NOMAD's core app, so the installer ships the kiwix-tools build for
+// the pinned kiwix-serve version; the engine uses it instead of downloading (download.kiwix.org
+// hands out mirrors that can be very slow), which also lets it install with no internet.
+async function kiwixTools() {
+  const seeder = await readFile(path.join(repo, 'admin', 'database', 'seeders', 'service_seeder.ts'), 'utf8')
+  const want = String(args.kiwix || seeder.match(/kiwix-serve:v?(\d+\.\d+\.\d+)/)?.[1] || '').replace(/^v/, '')
+  if (!want) throw new Error('Could not find the kiwix-serve version in service_seeder.ts (pass --kiwix)')
+  console.log(`kiwix-tools ${want}`)
+  const { base, listing } = await fetchKiwixListing()
+  const build = pickKiwixBuild(listing, want, { win: true, exactOnly: true })
+  if (!build) throw new Error(`No Windows kiwix-tools build for ${want} on ${base}`)
+  const zip = await fetchTo(base + build.file, build.file)
+  const seed = path.join(runtime, 'seed')
+  await rm(seed, { recursive: true, force: true })
+  await mkdir(seed, { recursive: true })
+  await copyFile(zip, path.join(seed, build.file))
+  for (const ref of [want, 'main']) {
+    const lic = await fetchText(`https://raw.githubusercontent.com/kiwix/kiwix-tools/${ref}/COPYING`).catch(() => null)
+    if (lic) {
+      await writeFile(path.join(licenses, 'kiwix-tools-COPYING.txt'), lic)
+      break
+    }
+  }
+  versions.kiwixTools = build.version
+}
+
 // ── WinSW ──────────────────────────────────────────────────────────────────
 async function winsw() {
   const tag = args.winsw || 'v2.12.0'
@@ -226,7 +256,7 @@ async function vcredist() {
 await mkdir(runtime, { recursive: true })
 await mkdir(licenses, { recursive: true })
 await mkdir(cache, { recursive: true })
-for (const step of [node, mariadb, redis, pmtiles, winsw, vcredist]) await step()
+for (const step of [node, mariadb, redis, pmtiles, kiwixTools, winsw, vcredist]) await step()
 
 // LICENSE.txt shown by the installer: NOMAD's license followed by the bundled components.
 const apache = await readFile(path.join(repo, 'LICENSE'), 'utf8')
@@ -239,8 +269,9 @@ const notice = [
   `  - MariaDB Server ${versions.mariadb} (GPL-2.0; source: https://mariadb.org/download/)`,
   `  - Redis for Windows ${versions.redis} (see licenses folder)`,
   `  - go-pmtiles ${versions.pmtiles} (BSD-3-Clause)`,
+  `  - kiwix-tools ${versions.kiwixTools} (GPL-3.0; source: https://github.com/kiwix/kiwix-tools)`,
   `  - WinSW ${versions.winsw} (MIT)`,
-  'Apps you install from the dashboard (Kiwix, Ollama, Qdrant, Kolibri, ...) are downloaded',
+  'Other apps you install from the dashboard (Ollama, Qdrant, Kolibri, ...) are downloaded',
   'from their official publishers and are covered by their own licenses.',
   '',
   '-------------------------------------------------------------------------------',

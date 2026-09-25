@@ -118,6 +118,7 @@ async function startAll() {
   state.engine = await startEngine({
     home: paths.engineDir,
     storageRoot: paths.storageDir,
+    seedDir: path.join(paths.runtimeDir, 'seed'),
     port: cfg.engine.port,
     token: cfg.engine.token,
     logger: engineLogger,

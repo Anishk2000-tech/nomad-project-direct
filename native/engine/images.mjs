@@ -54,10 +54,12 @@ export function normalizeRef(fromImage, tag) {
 }
 
 export class ImageStore {
-  constructor({ home, logger }) {
+  constructor({ home, logger, seedDir = null }) {
     this.home = home
     this.dir = path.join(home, 'images')
     this.cacheDir = path.join(home, 'cache')
+    // Downloads shipped with the installer (e.g. kiwix-tools), used instead of fetching them.
+    this.seedDir = seedDir
     this.log = logger.child('images')
     this.images = new Map()
     this.pulls = new Map()
@@ -180,7 +182,7 @@ export class ImageStore {
       resolved = { version: 'local', key: `local:${override}`, local: override }
     } else {
       emit({ status: 'Resolving native build', id: shortId })
-      resolved = await recipe.resolve({ repo: norm.repo, tag: norm.tag, ref: norm.ref })
+      resolved = await recipe.resolve({ repo: norm.repo, tag: norm.tag, ref: norm.ref, seedDir: this.seedDir })
     }
 
     const existing = this.find(norm.repoTag) || (norm.digest ? this.find(norm.ref) : null)
@@ -226,9 +228,16 @@ export class ImageStore {
         this.log.info(`Downloaded ${url} (${formatBytes(bytes)} in ${secs.toFixed(0)}s, ${formatBytes(bytes / Math.max(secs, 0.001))}/s)`)
         return dest
       },
-      // Download into the shared cache (reused across re-pulls) and return the file path.
+      // Download into the shared cache (reused across re-pulls) and return the file path; a copy
+      // bundled with the installer (seedDir) is used as is.
       fetch: async (url, name, opts = {}) => {
-        const dest = path.join(this.cacheDir, 'downloads', name.replace(/[^\w.+-]/g, '_'))
+        const file = name.replace(/[^\w.+-]/g, '_')
+        const seeded = this.seedDir && path.join(this.seedDir, file)
+        if (seeded && (await pathExists(seeded))) {
+          this.log.info(`Using bundled ${file}`)
+          return seeded
+        }
+        const dest = path.join(this.cacheDir, 'downloads', file)
         if (!(await pathExists(dest))) await ctx.download(url, dest, opts)
         return dest
       },

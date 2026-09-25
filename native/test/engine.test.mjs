@@ -2,6 +2,7 @@
 // the admin app uses it. Run: node native/test/engine.test.mjs [--network]
 //   --network  also pulls images that need internet access (static web app, Qdrant)
 // Env: NOMAD_ENGINE_OVERRIDE_KIWIX_SERVE=<dir with kiwix-serve> enables the Kiwix scenario.
+import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, copyFile, writeFile, rm } from 'node:fs/promises'
 import net from 'node:net'
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { startEngine } from '../engine/index.mjs'
 import { Logger, sleep } from '../engine/lib/util.mjs'
+import { kiwixPlatforms } from '../engine/recipes/kiwix.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
@@ -76,7 +78,9 @@ await mkdir(storage, { recursive: true })
 const token = 'test-token-123'
 const port = await freePort()
 const logger = new Logger('engine', process.env.NOMAD_LOG_LEVEL || 'warn')
-let engine = await startEngine({ home, storageRoot: storage, port, token, logger })
+const seedDir = path.join(tmp, 'seed') // stands in for the installer's runtime\seed
+await mkdir(seedDir, { recursive: true })
+let engine = await startEngine({ home, storageRoot: storage, port, token, logger, seedDir })
 const docker = new Docker({ host: '127.0.0.1', port, protocol: 'http', headers: { Authorization: `Bearer ${token}` } })
 
 console.log(`Engine test (home=${home})`)
@@ -230,6 +234,29 @@ await step('binds outside the storage folder are rejected', async () => {
   )
 })
 
+if (process.platform !== 'win32') {
+  await step('kiwix: a build bundled with the installer is used without contacting download.kiwix.org', async () => {
+    // 9.9.9 isn't published anywhere, so this only succeeds through the seed folder.
+    const { plat, ext } = kiwixPlatforms()[0]
+    const name = `kiwix-tools_${plat}-9.9.9`
+    const src = path.join(tmp, 'seed-src')
+    await mkdir(path.join(src, name), { recursive: true })
+    await writeFile(path.join(src, name, 'kiwix-serve'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    execFileSync('tar', ['-czf', path.join(seedDir, `${name}.${ext}`), '-C', src, name])
+    const override = process.env.NOMAD_ENGINE_OVERRIDE_KIWIX_SERVE
+    delete process.env.NOMAD_ENGINE_OVERRIDE_KIWIX_SERVE // the local override would win otherwise
+    try {
+      await pull(docker, 'ghcr.io/kiwix/kiwix-serve:9.9.9')
+    } finally {
+      if (override !== undefined) process.env.NOMAD_ENGINE_OVERRIDE_KIWIX_SERVE = override
+    }
+    const status = await (await fetch(`http://127.0.0.1:${port}/nomad/status`, { headers: { Authorization: `Bearer ${token}` } })).json()
+    const img = status.images.find((i) => i.tags.includes('ghcr.io/kiwix/kiwix-serve:9.9.9'))
+    assert.equal(img?.version, '9.9.9')
+    await docker.getImage('ghcr.io/kiwix/kiwix-serve:9.9.9').remove()
+  })
+}
+
 if (process.env.NOMAD_ENGINE_OVERRIDE_KIWIX_SERVE) {
   await step('kiwix: seeded config serves the bundled ZIM from a relative-path library', async () => {
     const zimDir = path.join(storage, 'zim')
@@ -259,7 +286,7 @@ if (process.env.NOMAD_ENGINE_OVERRIDE_KIWIX_SERVE) {
     assert.match(res.text, /f33283c0-0d00-3ceb-20ba-69d9b793a4dd|Wikipedia/)
     // Persistence: an unless-stopped container comes back after an engine restart.
     await engine.close()
-    engine = await startEngine({ home, storageRoot: storage, port, token, logger })
+    engine = await startEngine({ home, storageRoot: storage, port, token, logger, seedDir })
     const again = await httpGet(`http://127.0.0.1:${kport}/catalog/v2/entries`, { timeoutMs: 20000 })
     assert.equal(again.status, 200)
     await docker.getContainer('nomad_kiwix_server').remove({ force: true })

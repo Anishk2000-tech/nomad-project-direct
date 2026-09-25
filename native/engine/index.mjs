@@ -1,5 +1,6 @@
 // NOMAD native engine entry point. Used in-process by the Windows service supervisor, or
 // standalone for development:  node native/engine/index.mjs --home <dir> --storage <dir> [--port 2385]
+//                                [--seed <folder of bundled downloads>]
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ImageStore } from './images.mjs'
@@ -28,9 +29,10 @@ export async function startEngine({
   logsUi = null,
   onShutdownRequest = null,
   restore = true,
+  seedDir = null,
 }) {
   await ensureDir(home)
-  const images = new ImageStore({ home, logger })
+  const images = new ImageStore({ home, logger, seedDir })
   await images.load()
   const containers = new ContainerManager({
     home,
@@ -90,6 +92,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     port: Number(args.port || 2385),
     token: args.token ?? process.env.NOMAD_ENGINE_TOKEN ?? '',
     logsUi: args['logs-port'] ? { port: Number(args['logs-port']) } : null,
+    seedDir: args.seed ? path.resolve(args.seed) : null,
   })
   const stop = async () => {
     await engine.close()

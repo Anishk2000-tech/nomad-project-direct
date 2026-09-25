@@ -27,7 +27,8 @@ Center on Windows 10/11 **without Docker, Docker Desktop or WSL**. It ships as a
 
 Requirements: 64-bit Windows 10 or 11, 4 GB RAM minimum (16–32 GB and an NVIDIA/AMD GPU recommended
 for AI), and an internet connection while downloading apps and content. Everything works offline
-afterwards.
+afterwards. The Information Library (Kiwix) and a starter Wikipedia are bundled with the installer,
+so they install even without internet.
 
 **Silent install** (for scripted deployments):
 
@@ -76,7 +77,7 @@ Apps from the Supply Depot, each running as a native Windows program:
 
 | App | Native build used |
 |---|---|
-| Information Library (Kiwix) | official `kiwix-tools` Windows build (download.kiwix.org) |
+| Information Library (Kiwix) | official `kiwix-tools` Windows build, bundled with the installer (other versions from download.kiwix.org) |
 | AI Assistant (Ollama) | official Ollama for Windows (NVIDIA CUDA included; AMD ROCm added automatically when an AMD GPU is present) |
 | Qdrant (Knowledge Base vector DB) | official Qdrant Windows build |
 | Education Platform (Kolibri) | Kolibri from PyPI in a bundled portable Python |
