@@ -169,6 +169,7 @@ export class ImageStore {
   }
 
   async _pull(norm, emit) {
+    const started = Date.now()
     const recipe = findRecipe(norm.repo)
     const shortId = (norm.tag || 'latest').slice(0, 19)
     emit({ status: `Pulling from ${norm.repo}`, id: shortId })
@@ -212,10 +213,17 @@ export class ImageStore {
       log: this.log,
       progress: (status) => progress(status),
       download: async (url, dest, opts = {}) => {
+        const t = Date.now()
+        let bytes = 0
         await downloadFile(url, dest, {
           ...opts,
-          onProgress: ({ current, total }) => progress('Downloading', current, total),
+          onProgress: ({ current, total }) => {
+            bytes = current
+            progress('Downloading', current, total)
+          },
         })
+        const secs = (Date.now() - t) / 1000
+        this.log.info(`Downloaded ${url} (${formatBytes(bytes)} in ${secs.toFixed(0)}s, ${formatBytes(bytes / Math.max(secs, 0.001))}/s)`)
         return dest
       },
       // Download into the shared cache (reused across re-pulls) and return the file path.
@@ -297,7 +305,7 @@ export class ImageStore {
       this.images.set(id, loaded)
       emit({ status: 'Digest: ' + (record.RepoDigests[0]?.split('@')[1] ?? id) })
       emit({ status: `Status: Downloaded newer image for ${norm.repoTag}` })
-      this.log.info(`Pulled ${norm.repoTag} → ${recipe.id} ${resolved.version}`)
+      this.log.info(`Pulled ${norm.repoTag} → ${recipe.id} ${resolved.version} in ${((Date.now() - started) / 1000).toFixed(0)}s`)
       return loaded
     } catch (err) {
       await removeWithRetry(staging).catch(() => {})

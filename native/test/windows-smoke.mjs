@@ -6,7 +6,7 @@
 //                          [--ai] [--benchmark] [--model qwen2.5:0.5b] [--logs <NOMAD logs folder>]
 //
 // With --logs, an app install that fails is reported straight away with NOMAD's error message
-// (read from admin.log) instead of after the install timeout.
+// (read from admin.log) instead of after the install timeout, and slow installs print a timeline.
 import { open, stat } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -20,7 +20,7 @@ const args = Object.fromEntries(
 const BASE = String(args.base || 'http://localhost:8080').replace(/\/$/, '')
 const HOST = new URL(BASE).hostname
 const apps = String(args.apps || 'kiwix,cyberchef,flatnotes,kolibri').split(',').filter(Boolean)
-const ADMIN_LOG = args.logs ? path.join(String(args.logs), 'admin.log') : null
+const LOGS = args.logs ? String(args.logs) : null
 
 const APP_CHECKS = {
   kiwix: { service: 'nomad_kiwix_server', url: `http://${HOST}:8090/catalog/v2/entries`, expect: /Wikipedia/i, timeoutMin: 10 },
@@ -93,39 +93,71 @@ async function serviceState(name) {
   return (json || []).find((s) => s.service_name === name)
 }
 
-/** Current size of admin.log, so installFailure() only looks at what was logged afterwards. */
-async function adminLogMark() {
-  if (!ADMIN_LOG) return 0
-  return (await stat(ADMIN_LOG).catch(() => null))?.size ?? 0
+/** Current sizes of the NOMAD logs, so later reads only see what was written afterwards. */
+async function logMark() {
+  const mark = {}
+  for (const name of ['admin.log', 'supervisor.log']) mark[name] = LOGS ? ((await stat(path.join(LOGS, name)).catch(() => null))?.size ?? 0) : 0
+  return mark
 }
 
-/** The install error NOMAD logged for `service` since `mark`, if any. Lines are "<time> <pino JSON>". */
-async function installFailure(service, mark) {
-  if (!ADMIN_LOG) return null
-  const size = (await stat(ADMIN_LOG).catch(() => null))?.size ?? 0
-  const from = size < mark ? 0 : mark // the log was rotated
-  const fh = await open(ADMIN_LOG, 'r').catch(() => null)
-  if (!fh) return null
+/** Lines appended to a NOMAD log since `mark` (whole file if it was rotated since). */
+async function logLinesSince(name, mark) {
+  if (!LOGS) return []
+  const file = path.join(LOGS, name)
+  const size = (await stat(file).catch(() => null))?.size ?? 0
+  const from = size < (mark[name] ?? 0) ? 0 : (mark[name] ?? 0)
+  const fh = await open(file, 'r').catch(() => null)
+  if (!fh) return []
   try {
     const buf = Buffer.alloc(size - from)
     await fh.read(buf, 0, buf.length, from)
-    const prefix = `[DockerService] [${service}] error: `
-    for (const line of buf.toString('utf8').split('\n')) {
-      try {
-        const msg = JSON.parse(line.slice(line.indexOf('{'))).msg
-        if (typeof msg === 'string' && msg.startsWith(prefix)) return msg.slice(prefix.length)
-      } catch {}
-    }
-    return null
+    return buf.toString('utf8').split('\n').filter(Boolean)
   } finally {
     await fh.close()
   }
 }
 
+/** admin.log lines are "<time> <pino JSON>"; returns [time, msg] for NOMAD's install broadcasts about `service`. */
+async function installEvents(service, mark) {
+  const prefix = `[DockerService] [${service}] `
+  const events = []
+  for (const line of await logLinesSince('admin.log', mark)) {
+    try {
+      const msg = JSON.parse(line.slice(line.indexOf('{'))).msg
+      if (typeof msg === 'string' && msg.startsWith(prefix)) events.push([line.slice(0, 24), msg.slice(prefix.length)])
+    } catch {}
+  }
+  return events
+}
+
+/** The install error NOMAD logged for `service` since `mark`, if any. */
+async function installFailure(service, mark) {
+  const failed = (await installEvents(service, mark)).find(([, msg]) => msg.startsWith('error: '))
+  return failed ? failed[1].slice('error: '.length) : null
+}
+
+/** Where a slow install spent its time: NOMAD's install steps plus the engine's downloads. */
+async function printInstallTimeline(service, mark) {
+  const lines = [
+    ...(await installEvents(service, mark)).map(([t, msg]) => `${t} ${msg}`),
+    ...(await logLinesSince('supervisor.log', mark)).filter((l) => /\[engine:images\] (Downloaded|Pulled)/.test(l)),
+  ].sort()
+  for (const l of lines) console.log(`         ${l.slice(11, 19)}  ${l.slice(25).slice(0, 220)}`)
+}
+
 async function installApp(key) {
   const check = APP_CHECKS[key]
   if (!check) throw new Error(`unknown app "${key}"`)
-  const mark = await adminLogMark()
+  const mark = await logMark()
+  const started = Date.now()
+  try {
+    return await waitForApp(check, mark)
+  } finally {
+    if (LOGS && Date.now() - started > 60000) await printInstallTimeline(check.service, mark)
+  }
+}
+
+async function waitForApp(check, mark) {
   const existing = await serviceState(check.service)
   if (!existing?.installed) {
     const res = await http('POST', '/api/system/services/install', { service_name: check.service })

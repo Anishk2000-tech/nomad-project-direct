@@ -195,8 +195,8 @@ jobs:
           }
           Get-ChildItem -Recurse logs | Select-Object FullName, Length
 
-      - name: Show log excerpts
-        if: failure()
+      - name: Show warnings and errors from the logs
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: pwsh
         run: |
           foreach ($f in 'supervisor.log', 'admin.log', 'worker.log') {
