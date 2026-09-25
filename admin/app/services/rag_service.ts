@@ -128,12 +128,18 @@ export class RagService {
       const collectionExists = collections.collections.some((col) => col.name === collectionName)
 
       if (!collectionExists) {
-        await this.qdrant!.createCollection(collectionName, {
-          vectors: {
-            size: dimensions,
-            distance: 'Cosine',
-          },
-        })
+        try {
+          await this.qdrant!.createCollection(collectionName, {
+            vectors: {
+              size: dimensions,
+              distance: 'Cosine',
+            },
+          })
+        } catch (error: any) {
+          // Several embedding jobs can start at once (e.g. docs discovery after installing the AI
+          // Assistant); whichever loses the race gets 409 because the collection now exists.
+          if (error?.status !== 409) throw error
+        }
       }
 
       // Create payload indexes for faster filtering (idempotent — Qdrant ignores duplicates)
