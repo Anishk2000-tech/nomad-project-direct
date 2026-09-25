@@ -3,7 +3,13 @@
 // the same calls the dashboard makes — and then checks each app answers on its own port.
 //
 //   node windows-smoke.mjs [--base http://localhost:8080] [--apps kiwix,qdrant,cyberchef,...]
-//                          [--ai] [--benchmark] [--model qwen2.5:0.5b]
+//                          [--ai] [--benchmark] [--model qwen2.5:0.5b] [--logs <NOMAD logs folder>]
+//
+// With --logs, an app install that fails is reported straight away with NOMAD's error message
+// (read from admin.log) instead of after the install timeout.
+import { open, stat } from 'node:fs/promises'
+import path from 'node:path'
+
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, arr) => {
     if (!a.startsWith('--')) return acc
@@ -14,6 +20,7 @@ const args = Object.fromEntries(
 const BASE = String(args.base || 'http://localhost:8080').replace(/\/$/, '')
 const HOST = new URL(BASE).hostname
 const apps = String(args.apps || 'kiwix,cyberchef,flatnotes,kolibri').split(',').filter(Boolean)
+const ADMIN_LOG = args.logs ? path.join(String(args.logs), 'admin.log') : null
 
 const APP_CHECKS = {
   kiwix: { service: 'nomad_kiwix_server', url: `http://${HOST}:8090/catalog/v2/entries`, expect: /Wikipedia/i, timeoutMin: 10 },
@@ -73,6 +80,7 @@ async function waitFor(what, fn, timeoutMs, intervalMs = 5000) {
       if (r === true || (r && r.ok)) return r
       last = r?.why ?? String(r)
     } catch (err) {
+      if (err.fatal) throw err
       last = err.message
     }
     await sleep(intervalMs)
@@ -85,9 +93,39 @@ async function serviceState(name) {
   return (json || []).find((s) => s.service_name === name)
 }
 
+/** Current size of admin.log, so installFailure() only looks at what was logged afterwards. */
+async function adminLogMark() {
+  if (!ADMIN_LOG) return 0
+  return (await stat(ADMIN_LOG).catch(() => null))?.size ?? 0
+}
+
+/** The install error NOMAD logged for `service` since `mark`, if any. Lines are "<time> <pino JSON>". */
+async function installFailure(service, mark) {
+  if (!ADMIN_LOG) return null
+  const size = (await stat(ADMIN_LOG).catch(() => null))?.size ?? 0
+  const from = size < mark ? 0 : mark // the log was rotated
+  const fh = await open(ADMIN_LOG, 'r').catch(() => null)
+  if (!fh) return null
+  try {
+    const buf = Buffer.alloc(size - from)
+    await fh.read(buf, 0, buf.length, from)
+    const prefix = `[DockerService] [${service}] error: `
+    for (const line of buf.toString('utf8').split('\n')) {
+      try {
+        const msg = JSON.parse(line.slice(line.indexOf('{'))).msg
+        if (typeof msg === 'string' && msg.startsWith(prefix)) return msg.slice(prefix.length)
+      } catch {}
+    }
+    return null
+  } finally {
+    await fh.close()
+  }
+}
+
 async function installApp(key) {
   const check = APP_CHECKS[key]
   if (!check) throw new Error(`unknown app "${key}"`)
+  const mark = await adminLogMark()
   const existing = await serviceState(check.service)
   if (!existing?.installed) {
     const res = await http('POST', '/api/system/services/install', { service_name: check.service })
@@ -98,6 +136,8 @@ async function installApp(key) {
     async () => {
       const s = await serviceState(check.service)
       if (s?.installed && s.status === 'running') return true
+      const failure = await installFailure(check.service, mark)
+      if (failure) throw Object.assign(new Error(`install failed: ${failure}`), { fatal: true })
       const all = await http('GET', `/api/system/services/${check.service}/logs?tail=5`).catch(() => null)
       return { ok: false, why: `${s ? `${s.installation_status}/${s.status}` : 'not listed yet'} ${all?.json?.logs ? '| ' + String(all.json.logs).trim().split('\n').pop() : ''}` }
     },

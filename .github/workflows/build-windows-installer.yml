@@ -148,6 +148,7 @@ jobs:
           path: dist
 
       - name: Silent install
+        id: install
         shell: pwsh
         run: |
           $setup = Get-ChildItem dist\ProjectNOMAD-Setup-*.exe | Select-Object -First 1
@@ -165,10 +166,12 @@ jobs:
           $node = 'C:\Program Files\Project NOMAD\runtime\node\node.exe'
           $extra = @()
           if ('${{ github.event_name }}' -ne 'workflow_dispatch' -or '${{ inputs.test_ai }}' -eq 'true') { $extra += '--ai' }
-          & $node native\test\windows-smoke.mjs --apps kiwix,cyberchef,flatnotes,kolibri,filebrowser,ittools --benchmark @extra
+          & $node native\test\windows-smoke.mjs --apps kiwix,cyberchef,flatnotes,kolibri,filebrowser,ittools --benchmark --logs C:\NOMADData\logs @extra
           exit $LASTEXITCODE
 
+      # The remaining checks still run when an app check failed, as long as NOMAD itself installed.
       - name: Service restart brings everything back
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: pwsh
         run: |
           Restart-Service ProjectNOMAD -Verbose
@@ -192,6 +195,23 @@ jobs:
           }
           Get-ChildItem -Recurse logs | Select-Object FullName, Length
 
+      - name: Show log excerpts
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($f in 'supervisor.log', 'admin.log', 'worker.log') {
+            $p = "C:\NOMADData\logs\$f"
+            if (-not (Test-Path $p)) { continue }
+            Write-Host "::group::$f (warnings and errors)"
+            Select-String -Path $p -Pattern '"level":(40|50|60)|\] (WARN|ERROR)|error:|failed' | Select-Object -Last 60 | ForEach-Object { $_.Line }
+            Write-Host '::endgroup::'
+          }
+          Get-ChildItem C:\NOMADData\engine\containers -Recurse -Filter container.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "::group::app log $($_.Directory.Name.Substring(0,12))"
+            Get-Content $_.FullName -Tail 30
+            Write-Host '::endgroup::'
+          }
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -200,6 +220,7 @@ jobs:
           retention-days: 14
 
       - name: Silent uninstall keeps user data
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: pwsh
         run: |
           Start-Process 'C:\Program Files\Project NOMAD\Uninstall Project NOMAD.exe' -ArgumentList '/S' -Wait
