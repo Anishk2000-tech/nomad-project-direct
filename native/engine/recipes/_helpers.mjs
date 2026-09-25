@@ -175,14 +175,21 @@ export async function pipInstall(ctx, python, target, requirements, { extraArgs 
   await ctx.run(python, args, { timeout: 45 * 60 * 1000 })
 }
 
+// Packages that can't be installed on Windows but are optional there (uvicorn only uses uvloop
+// when it's importable). Lock files generated on Linux lose their platform markers, so pip would
+// try — and fail — to build them from source; add the marker back.
+const POSIX_ONLY = new Set(['uvloop'])
+
 /** Convert a Pipfile.lock "default" section to pip requirement lines (keeps env markers). */
 export async function requirementsFromPipfileLock(lockPath) {
   const lock = JSON.parse(await readFile(lockPath, 'utf8'))
   return Object.entries(lock.default || {}).map(([name, spec]) => {
     const extras = spec.extras?.length ? `[${spec.extras.join(',')}]` : ''
     const version = spec.version || ''
-    const markers = spec.markers ? `; ${spec.markers}` : ''
-    return `${name}${extras}${version}${markers}`
+    const markers = []
+    if (spec.markers) markers.push(`(${spec.markers})`)
+    if (POSIX_ONLY.has(name.toLowerCase())) markers.push(`sys_platform != "win32"`)
+    return `${name}${extras}${version}${markers.length ? `; ${markers.join(' and ')}` : ''}`
   })
 }
 
