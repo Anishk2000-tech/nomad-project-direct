@@ -133,7 +133,9 @@ Var NoStart
 !macroend
 
 Function OpenDashboard
-  ExecShell "open" "${WEBURL}"
+  ; Hand the URL to the running (unelevated) Explorer so the browser doesn't start with the
+  ; installer's administrator rights.
+  Exec '"$WINDIR\explorer.exe" "${WEBURL}"'
 FunctionEnd
 
 Function ValidateDataDir
