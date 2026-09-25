@@ -9,9 +9,10 @@ const MIRRORS = [
   'https://mirror.download.kiwix.org/release/kiwix-tools/',
 ]
 
-function platformTag() {
-  if (isWin) return { plat: 'win-x86_64', ext: 'zip' }
-  return { plat: process.arch === 'arm64' ? 'linux-aarch64' : 'linux-x86_64', ext: 'tar.gz' }
+/** Build flavours to look for, best first (32-bit Windows builds also run on 64-bit Windows). */
+function platformTags() {
+  if (isWin) return [{ plat: 'win-x86_64', ext: 'zip' }, { plat: 'win-i686', ext: 'zip' }]
+  return [{ plat: process.arch === 'arm64' ? 'linux-aarch64' : 'linux-x86_64', ext: 'tar.gz' }]
 }
 
 export default {
@@ -20,7 +21,6 @@ export default {
   match: (repo) => repo === 'ghcr.io/kiwix/kiwix-serve' || repo === 'kiwix/kiwix-serve',
 
   async resolve({ tag }) {
-    const { plat, ext } = platformTag()
     let listing = null
     let base = null
     for (const m of MIRRORS) {
@@ -32,9 +32,16 @@ export default {
     }
     if (!listing) throw new EngineError(502, 'Could not reach download.kiwix.org to fetch Kiwix. Check the internet connection.')
 
-    const re = new RegExp(`kiwix-tools_${plat}-(\\d+\\.\\d+\\.\\d+(?:-\\d+)?)\\.${ext.replace('.', '\\.')}`, 'g')
-    const builds = [...new Set([...listing.matchAll(re)].map((m) => m[1]))]
-    if (!builds.length) throw new EngineError(404, `No kiwix-tools build for ${plat} is published`)
+    let plat, ext, builds = []
+    for (const candidate of platformTags()) {
+      const re = new RegExp(`kiwix-tools_${candidate.plat}-(\\d+\\.\\d+\\.\\d+(?:-\\d+)?)\\.${candidate.ext.replace('.', '\\.')}`, 'g')
+      builds = [...new Set([...listing.matchAll(re)].map((m) => m[1]))]
+      if (builds.length) {
+        ;({ plat, ext } = candidate)
+        break
+      }
+    }
+    if (!builds.length) throw new EngineError(404, `No kiwix-tools build for ${platformTags()[0].plat} is published`)
 
     const want = String(tag || '').replace(/^v/, '')
     const byVersionDesc = (a, b) => compareVersions(b, a)
