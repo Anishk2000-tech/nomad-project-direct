@@ -263,6 +263,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('windows-v{0}', needs.build.outputs.version) }}
+          # A new tag (manual publish) must point at the commit that was built, not the default branch.
+          target_commitish: ${{ github.sha }}
           name: Project NOMAD ${{ needs.build.outputs.version }} for Windows
           files: |
             dist/ProjectNOMAD-Setup-*.exe
