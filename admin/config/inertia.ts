@@ -21,6 +21,9 @@ const inertiaConfig = defineConfig({
   sharedData: {
     appVersion: () => SystemService.getAppVersion(),
     environment: process.env.NODE_ENV || 'production',
+    // True in the Docker-free native edition (e.g. the Windows installer), where only catalog
+    // apps with a native build can be installed and custom Docker images are unavailable.
+    nativeRuntime: process.env.NOMAD_RUNTIME === 'native',
     aiAssistantName: async () => {
       const now = Date.now()
       if (_assistantNameCache && now < _assistantNameCache.expiresAt) {

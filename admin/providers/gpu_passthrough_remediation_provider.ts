@@ -25,13 +25,16 @@ export default class GpuPassthroughRemediationProvider {
 
   async boot() {
     if (this.app.getEnvironment() !== 'web') return
+    // Native edition: Ollama runs on the host and talks to the GPU driver directly, so there is
+    // no container passthrough to repair (and a force-reinstall would re-download Ollama).
+    if (process.env.NOMAD_RUNTIME === 'native') return
 
     setImmediate(async () => {
       try {
         const KVStore = (await import('#models/kv_store')).default
         const { DockerService } = await import('#services/docker_service')
         const { SERVICE_NAMES } = await import('../constants/service_names.js')
-        const Docker = (await import('dockerode')).default
+        const { createDockerClient } = await import('../app/utils/native_runtime.js')
 
         const enabledRaw = await KVStore.getValue('ai.autoFixGpuPassthrough')
         if (String(enabledRaw) === 'false') {
@@ -41,7 +44,7 @@ export default class GpuPassthroughRemediationProvider {
           return
         }
 
-        const docker = new Docker({ socketPath: '/var/run/docker.sock' })
+        const docker = createDockerClient()
         const dockerInfo = await docker.info()
         const runtimes = dockerInfo.Runtimes || {}
         const hasNvidiaRuntime = 'nvidia' in runtimes

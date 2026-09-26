@@ -119,7 +119,7 @@ export default function Home(props: {
   const updateInfo = useUpdateAvailable();
   const rerunBanner = useBenchmarkRerunBanner()
   const queryClient = useQueryClient()
-  const { aiAssistantName } = usePage<{ aiAssistantName: string }>().props
+  const { aiAssistantName, nativeRuntime } = usePage<{ aiAssistantName: string; nativeRuntime?: boolean }>().props
 
   const handleDismissRerunBanner = async () => {
     await api.updateSetting('benchmark.rerunBannerDismissed', true)
@@ -168,8 +168,14 @@ export default function Home(props: {
     items.push(DRUG_REFERENCE_ITEM)
   }
 
-  // Add system items
-  items.push(...SYSTEM_ITEMS)
+  // Add system items. The native edition can't run arbitrary Docker containers.
+  items.push(
+    ...SYSTEM_ITEMS.map((item) =>
+      nativeRuntime && item.to === '/supply-depot'
+        ? { ...item, description: 'Browse and install curated apps for your NOMAD' }
+        : item
+    )
+  )
 
   // Sort all items by display order
   items.sort((a, b) => a.displayOrder - b.displayOrder)

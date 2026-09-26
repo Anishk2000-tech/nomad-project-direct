@@ -23,6 +23,7 @@ import { KV_STORE_SCHEMA, KVStoreKey } from '../../types/kv_store.js'
 import { isNewerVersion } from '../utils/version.js'
 import { invalidateAssistantNameCache } from '../../config/inertia.js'
 import { KiwixLibraryService } from '#services/kiwix_library_service'
+import { getNativeImageSupport, isNativeRuntime, releasesApiUrl } from '../utils/native_runtime.js'
 
 @inject()
 export class SystemService {
@@ -353,9 +354,22 @@ export class SystemService {
       query.where('installed', true)
     }
 
-    const services = await query
+    let services = await query
     if (!services || services.length === 0) {
       return []
+    }
+
+    // Native edition: hide catalog apps that have no native build. Installed and custom apps stay
+    // visible so they can still be managed.
+    if (isNativeRuntime()) {
+      try {
+        const support = await getNativeImageSupport(services.map((s) => s.container_image))
+        services = services.filter(
+          (s) => s.installed || s.is_custom || support[s.container_image]?.supported !== false
+        )
+      } catch (error) {
+        logger.warn(`[SystemService] Could not check native app support: ${error instanceof Error ? error.message : error}`)
+      }
     }
 
     const toReturn: ServiceSlim[] = []
@@ -676,18 +690,18 @@ export class SystemService {
       let latestVersion: string
       if (earlyAccess) {
         const response = await axios.get(
-          'https://api.github.com/repos/Crosstalk-Solutions/project-nomad/releases',
+          releasesApiUrl(),
           { headers: { Accept: 'application/vnd.github+json' }, timeout: 5000 }
         )
         if (!response?.data?.length) throw new Error('No releases found')
-        latestVersion = response.data[0].tag_name.replace(/^v/, '').trim()
+        latestVersion = response.data[0].tag_name.replace(/^(windows-)?v/i, '').trim()
       } else {
         const response = await axios.get(
-          'https://api.github.com/repos/Crosstalk-Solutions/project-nomad/releases/latest',
+          `${releasesApiUrl()}/latest`,
           { headers: { Accept: 'application/vnd.github+json' }, timeout: 5000 }
         )
         if (!response?.data?.tag_name) throw new Error('Invalid response from GitHub API')
-        latestVersion = response.data.tag_name.replace(/^v/, '').trim()
+        latestVersion = response.data.tag_name.replace(/^(windows-)?v/i, '').trim()
       }
 
       logger.info(`Current version: ${currentVersion}, Latest version: ${latestVersion}`)
@@ -796,7 +810,7 @@ export class SystemService {
       if (os.hostname) lines.push(`  Hostname: ${os.hostname}`)
       if (os.kernel) lines.push(`  Kernel: ${os.kernel}`)
       if (os.arch) lines.push(`  Architecture: ${os.arch}`)
-      if (dockerVersion) lines.push(`  Docker Engine: ${dockerVersion}`)
+      if (dockerVersion) lines.push(`  ${isNativeRuntime() ? 'Native engine' : 'Docker Engine'}: ${dockerVersion}`)
       if (uptime?.uptime) lines.push(`  Uptime: ${this._formatUptime(uptime.uptime)}`)
 
       lines.push('')
@@ -845,7 +859,7 @@ export class SystemService {
     lines.push('')
     lines.push('Storage:')
     lines.push(`  Host storage root: ${hostStorageRoot ?? 'unknown'}`)
-    lines.push(`  Container path: ${DockerService.ADMIN_STORAGE_DEST}`)
+    lines.push(`  ${isNativeRuntime() ? 'Admin storage path' : 'Container path'}: ${isNativeRuntime() ? join(process.cwd(), 'storage') : DockerService.ADMIN_STORAGE_DEST}`)
     const storageEnv = process.env.NOMAD_STORAGE_PATH
     lines.push(
       `  NOMAD_STORAGE_PATH: ${storageEnv ? storageEnv : 'not set (auto-detected from admin mount)'}`

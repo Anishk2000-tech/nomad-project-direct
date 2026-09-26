@@ -1,4 +1,4 @@
-import { Head, router } from '@inertiajs/react'
+import { Head, router, usePage } from '@inertiajs/react'
 import { useEffect, useRef, useState } from 'react'
 import {
   IconAlertTriangle,
@@ -91,6 +91,7 @@ type Modal =
   | null
 
 export default function SupplyDepotPage(props: { system: { services: ServiceSlim[] } }) {
+  const { nativeRuntime } = usePage<{ nativeRuntime?: boolean }>().props
   const { showError } = useErrorNotification()
   const { addNotification } = useNotifications()
   const { isOnline } = useInternetStatus()
@@ -400,8 +401,9 @@ export default function SupplyDepotPage(props: { system: { services: ServiceSlim
                   Supply Depot
                 </h1>
                 <p className="text-sm text-white/70 mt-1 max-w-xl">
-                  Browse and install curated apps, or add your own custom apps by providing a Docker
-                  image.
+                  {nativeRuntime
+                    ? 'Browse and install curated apps. Apps run natively on this computer — no Docker required.'
+                    : 'Browse and install curated apps, or add your own custom apps by providing a Docker image.'}
                 </p>
               </div>
             </div>
@@ -435,18 +437,20 @@ export default function SupplyDepotPage(props: { system: { services: ServiceSlim
               >
                 Check for Updates
               </StyledButton>
-              <StyledButton
-                icon="IconBrandDocker"
-                variant="outline"
-                onClick={() => setCustomAppOpen(true)}
-              >
-                Add Custom App
-              </StyledButton>
+              {!nativeRuntime && (
+                <StyledButton
+                  icon="IconBrandDocker"
+                  variant="outline"
+                  onClick={() => setCustomAppOpen(true)}
+                >
+                  Add Custom App
+                </StyledButton>
+              )}
             </div>
 
             {/* Category filters */}
             <div className="flex flex-wrap gap-2">
-              {CATEGORIES.map((cat) => (
+              {CATEGORIES.filter((cat) => !(nativeRuntime && cat.id === 'custom')).map((cat) => (
                 <button
                   key={cat.id}
                   onClick={() => setActiveCategory(cat.id)}
@@ -713,7 +717,7 @@ export default function SupplyDepotPage(props: { system: { services: ServiceSlim
                 onChange={(e) => setRemoveImage(e.target.checked)}
                 className="accent-desert-red h-4 w-4 rounded"
               />
-              <span className="text-text-muted text-xs">Also remove the Docker image to reclaim disk space</span>
+              <span className="text-text-muted text-xs">{nativeRuntime ? "Also delete the downloaded app files to reclaim disk space" : "Also remove the Docker image to reclaim disk space"}</span>
             </label>
           </div>
         </StyledModal>
@@ -746,7 +750,7 @@ export default function SupplyDepotPage(props: { system: { services: ServiceSlim
                 onChange={(e) => setRemoveImage(e.target.checked)}
                 className="accent-desert-red h-4 w-4 rounded"
               />
-              <span className="text-text-muted text-xs">Also remove the Docker image to reclaim disk space</span>
+              <span className="text-text-muted text-xs">{nativeRuntime ? "Also delete the downloaded app files to reclaim disk space" : "Also remove the Docker image to reclaim disk space"}</span>
             </label>
           </div>
         </StyledModal>

@@ -32,6 +32,9 @@ Project NOMAD is now installed on your device! Open a browser and navigate to `h
 
 For a complete step-by-step walkthrough (including Ubuntu installation), see the [Installation Guide](https://www.projectnomad.us/install). For Windows users, see the [WSL2 install guide](https://www.projectnomad.us/install/wsl2) — community-supported path covering native Docker and Docker Desktop install routes.
 
+### Windows (no Docker, no WSL)
+Project NOMAD can also run natively on 64-bit Windows 10/11 from a single installer — no Docker Desktop or WSL needed. Download `ProjectNOMAD-Setup-<version>.exe` from this repository's **Releases** (or the latest *Build Windows Installer* workflow run), run it, pick a data folder, and NOMAD opens at `http://localhost:8080` running as a Windows service. Apps run as native Windows programs; a few Supply Depot apps without Windows builds aren't offered. See [native/README.md](native/README.md) for details, limitations and how it works.
+
 ### Advanced Installation
 For more control over the installation process, copy and paste the [Docker Compose template](https://raw.githubusercontent.com/Crosstalk-Solutions/project-nomad/refs/heads/main/install/management_compose.yaml) into a `docker-compose.yml` file and customize it to your liking (be sure to replace any placeholders with your actual values). Then, run `docker compose up -d` to start the Command Center and its dependencies. Note: this method is recommended for advanced users only, as it requires familiarity with Docker and manual configuration before starting.
 

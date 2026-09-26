@@ -1,4 +1,4 @@
-import { Archive, Entry } from '@openzim/libzim'
+import { Archive, type ZimEntry as Entry } from '../utils/libzim.js'
 import * as cheerio from 'cheerio'
 import { HTML_SELECTORS_TO_REMOVE, NON_CONTENT_HEADING_PATTERNS } from '../../constants/zim_extraction.js'
 import { extractStructuredContent } from '../utils/zim_html.js'

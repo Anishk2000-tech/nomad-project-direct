@@ -26,6 +26,7 @@ import { randomBytes } from 'node:crypto'
 import KVStore from '#models/kv_store'
 import { BROADCAST_CHANNELS } from '../../constants/broadcast.js'
 import { KIWIX_LIBRARY_CMD } from '../../constants/kiwix.js'
+import { createDockerClient, engineRequest, isNativeRuntime } from '../utils/native_runtime.js'
 
 @inject()
 export class DockerService {
@@ -50,15 +51,9 @@ export class DockerService {
   private _servicesStatusInflight: Promise<{ service_name: string; status: string }[]> | null = null
 
   constructor() {
-    // Support both Linux (production) and Windows (development with Docker Desktop)
-    const isWindows = process.platform === 'win32'
-    if (isWindows) {
-      // Windows Docker Desktop uses named pipe
-      this.docker = new Docker({ socketPath: '//./pipe/docker_engine' })
-    } else {
-      // Linux uses Unix socket
-      this.docker = new Docker({ socketPath: '/var/run/docker.sock' })
-    }
+    // Linux socket (production), Docker Desktop's named pipe (Windows development), or the
+    // native engine (Docker-free edition) — see utils/native_runtime.ts.
+    this.docker = createDockerClient()
   }
 
   /**
@@ -242,7 +237,13 @@ export class DockerService {
       return null
     }
 
-    const hostname = process.env.NODE_ENV === 'production' ? serviceName : 'localhost'
+    // Docker: siblings resolve each other by container name on the compose network. Native:
+    // every app listens on this machine (127.0.0.1 avoids Windows resolving localhost to ::1).
+    const hostname = isNativeRuntime()
+      ? '127.0.0.1'
+      : process.env.NODE_ENV === 'production'
+        ? serviceName
+        : 'localhost'
 
     // "https:8480" / "http:8480" — explicit scheme + port (e.g. an app serving its own TLS).
     const schemePort = service.ui_location?.match(/^(https?):(\d+)$/)
@@ -496,7 +497,13 @@ export class DockerService {
       const port = portMatch[1] || portMatch[2]
       const portText = port ? `port ${port}` : 'a required port'
       if (port === '11434' || serviceName === SERVICE_NAMES.OLLAMA) {
+        if (isNativeRuntime() && process.platform === 'win32') {
+          return `Couldn't start because ${portText} is already in use on this machine. This usually means the Ollama desktop app is already running. Quit Ollama from the system tray (and turn off its "start at login" option), then try again.`
+        }
         return `Couldn't start because ${portText} is already in use on this machine. This usually means Ollama is already installed and running directly on the host (outside NOMAD). Stop and disable the host Ollama service (e.g. "sudo systemctl stop ollama" then "sudo systemctl disable ollama"), then try again.`
+      }
+      if (isNativeRuntime() && process.platform === 'win32') {
+        return `Couldn't start because ${portText} is already in use on this computer. Close the program using ${portText} (run "netstat -ano | findstr :${port ?? ''}" in a Command Prompt to find it), then try again.`
       }
       return `Couldn't start because ${portText} is already in use on this machine. Stop whatever is using ${portText} on the host, then try again.`
     }
@@ -972,16 +979,25 @@ export class DockerService {
     )
 
     try {
-      await doResumableDownloadWithRetry({
-        url: WIKIPEDIA_ZIM_URL,
-        filepath,
-        timeout: 60000,
-        allowedMimeTypes: [
-          'application/x-zim',
-          'application/x-openzim',
-          'application/octet-stream',
-        ],
-      })
+      // Installers that bundle the starter ZIM (the native edition ships it in assets/zim) copy
+      // it locally instead of fetching it, so the first install works without reaching GitHub.
+      const bundledZim = join(process.cwd(), 'assets', 'zim', filename)
+      const hasBundled = await access(bundledZim).then(() => true, () => false)
+      if (hasBundled) {
+        await mkdir(join(process.cwd(), ZIM_STORAGE_PATH), { recursive: true })
+        await copyFile(bundledZim, filepath)
+      } else {
+        await doResumableDownloadWithRetry({
+          url: WIKIPEDIA_ZIM_URL,
+          filepath,
+          timeout: 60000,
+          allowedMimeTypes: [
+            'application/x-zim',
+            'application/x-openzim',
+            'application/octet-stream',
+          ],
+        })
+      }
 
       this._broadcast(
         SERVICE_NAMES.KIWIX,
@@ -1089,6 +1105,12 @@ export class DockerService {
     ]).then(([c, k]) => c && k)
 
     if (alreadyHasCert) return { certPath, keyPath }
+
+    if (isNativeRuntime()) {
+      // Windows has no openssl CLI; the native engine generates the same cert in pure JS.
+      await engineRequest('POST', '/nomad/selfsigned', { dir: certDir, commonName })
+      return { certPath, keyPath }
+    }
 
     // 10-year self-signed cert. CN/SAN are cosmetic for a self-signed cert (the browser warns
     // regardless), but a SAN keeps it structurally valid for clients that require one.

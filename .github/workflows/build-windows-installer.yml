@@ -1,0 +1,280 @@
+name: Build Windows Installer (no Docker)
+
+# Builds the Docker-free Windows edition of Project NOMAD into a single setup .exe, then installs
+# it on a fresh Windows machine and exercises it end-to-end (service start, dashboard, installing
+# apps through the API, service restart, uninstall). Tags (v1.2.3 / windows-v1.2.3) and manual
+# runs with "publish" also attach the installer to a GitHub release.
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+    tags: ['v*', 'windows-v*']
+    paths:
+      - 'native/**'
+      - 'admin/**'
+      - 'collections/**'
+      - 'install/wikipedia_en_100_mini_2026-01.zim'
+      - 'install/calibre-empty-library/**'
+      - '.github/workflows/build-windows-installer.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label (default: package.json version)'
+        required: false
+        type: string
+      publish:
+        description: 'Publish the installer as a GitHub release'
+        required: false
+        type: boolean
+        default: false
+      test_ai:
+        description: 'Smoke-test the AI Assistant too (downloads Ollama + a small model, ~2 GB)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $v = '${{ inputs.version }}'
+          if (-not $v -and '${{ github.ref_type }}' -eq 'tag') { $v = '${{ github.ref_name }}' -replace '^(windows-)?v', '' }
+          if (-not $v) { $v = (Get-Content package.json -Raw | ConvertFrom-Json).version }
+          $numeric = ($v -replace '[^0-9.].*$', '')
+          $parts = @($numeric.Split('.') | Where-Object { $_ -ne '' })
+          while ($parts.Count -lt 4) { $parts += '0' }
+          $vi = ($parts[0..3] -join '.')
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "vi=$vi" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v (file version $vi)"
+
+      - name: Install admin dependencies
+        working-directory: admin
+        # @openzim/libzim has no Windows build and its install script would fail; NOMAD uses its
+        # built-in ZIM reader on Windows. Nothing else needed for building requires scripts.
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Stage app (build + production dependencies)
+        run: node native/scripts/stage-app.mjs --out dist/stage --version ${{ steps.version.outputs.version }} --releases-repo ${{ github.repository }}
+
+      - name: Cache runtime downloads
+        uses: actions/cache@v4
+        with:
+          path: dist/download-cache
+          key: win-runtimes-${{ hashFiles('native/scripts/fetch-windows-runtimes.mjs') }}-${{ runner.os }}
+
+      - name: Fetch Windows runtimes (Node.js, MariaDB, Redis, pmtiles, WinSW)
+        run: node native/scripts/fetch-windows-runtimes.mjs --out dist/stage --cache dist/download-cache
+
+      - name: Check bundled runtimes start
+        shell: pwsh
+        run: |
+          & dist\stage\runtime\node\node.exe --version
+          & dist\stage\runtime\redis\redis-server.exe --version
+          & dist\stage\runtime\mariadb\bin\mariadbd.exe --version
+          & dist\stage\runtime\pmtiles\pmtiles.exe version
+          # The bundled kiwix-tools build must start too (it's what the Information Library runs).
+          $kz = Get-ChildItem dist\stage\runtime\seed\kiwix-tools_win-*.zip | Select-Object -First 1
+          if (-not $kz) { throw 'kiwix-tools was not bundled' }
+          Expand-Archive $kz.FullName -DestinationPath $env:RUNNER_TEMP\kiwix-check -Force
+          & (Get-ChildItem $env:RUNNER_TEMP\kiwix-check -Recurse -Filter kiwix-serve.exe | Select-Object -First 1).FullName --version
+          Get-Content dist\stage\runtime\versions.json
+
+      - name: Prune files not needed at runtime
+        run: node native/scripts/prune-app.mjs --dir dist/stage/app
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) { choco install nsis -y --no-progress }
+            'C:\Program Files (x86)\NSIS' >> $env:GITHUB_PATH
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $out = "$PWD\dist\ProjectNOMAD-Setup-${{ steps.version.outputs.version }}.exe"
+          makensis /V3 "/DVERSION=${{ steps.version.outputs.version }}" "/DVIVERSION=${{ steps.version.outputs.vi }}" "/DSTAGE=$PWD\dist\stage" "/DOUTFILE=$out" native\installer\windows\nomad.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $size = (Get-Item $out).Length / 1MB
+          $hash = (Get-FileHash $out -Algorithm SHA256).Hash
+          "$hash  $(Split-Path $out -Leaf)" | Out-File -Encoding ascii "$out.sha256"
+          Write-Host ("Built {0} ({1:N0} MB) sha256 {2}" -f $out, $size, $hash)
+          "### Installer`n`n``$(Split-Path $out -Leaf)`` — $([math]::Round($size)) MB — sha256 ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProjectNOMAD-Windows-Setup
+          path: |
+            dist/ProjectNOMAD-Setup-*.exe
+            dist/ProjectNOMAD-Setup-*.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  smoke-test:
+    name: Install & smoke test on a fresh Windows machine
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: native/test
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProjectNOMAD-Windows-Setup
+          path: dist
+
+      - name: Silent install
+        id: install
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\ProjectNOMAD-Setup-*.exe | Select-Object -First 1
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process $setup.FullName -ArgumentList '/S', '/DATA=C:\NOMADData' -Wait -PassThru
+          Write-Host "Installer exit code $($p.ExitCode) after $([int]$sw.Elapsed.TotalSeconds)s"
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          Get-Service ProjectNOMAD | Format-List Name, Status, StartType
+          Get-ChildItem 'C:\Program Files\Project NOMAD'
+          Get-Content 'C:\Program Files\Project NOMAD\build-info.json'
+
+      - name: Smoke test (dashboard + apps)
+        shell: pwsh
+        run: |
+          $node = 'C:\Program Files\Project NOMAD\runtime\node\node.exe'
+          $extra = @()
+          if ('${{ github.event_name }}' -ne 'workflow_dispatch' -or '${{ inputs.test_ai }}' -eq 'true') { $extra += '--ai' }
+          & $node native\test\windows-smoke.mjs --apps kiwix,cyberchef,flatnotes,kolibri,filebrowser,ittools --benchmark --logs C:\NOMADData\logs @extra
+          exit $LASTEXITCODE
+
+      # The remaining checks still run when an app check failed, as long as NOMAD itself installed.
+      - name: Service restart brings everything back
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          Restart-Service ProjectNOMAD -Verbose
+          $node = 'C:\Program Files\Project NOMAD\runtime\node\node.exe'
+          & $node 'C:\Program Files\Project NOMAD\native\launcher\nomadctl.mjs' wait --install-dir 'C:\Program Files\Project NOMAD' --timeout 300
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Start-Sleep -Seconds 20
+          & $node 'C:\Program Files\Project NOMAD\native\launcher\nomadctl.mjs' status --install-dir 'C:\Program Files\Project NOMAD'
+          (Invoke-WebRequest http://localhost:8090/catalog/v2/entries -UseBasicParsing).StatusCode
+          (Invoke-WebRequest http://localhost:8100/ -UseBasicParsing).StatusCode
+
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force logs | Out-Null
+          Copy-Item -Recurse -Force C:\NOMADData\logs logs\nomad -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force 'C:\Program Files\Project NOMAD\service\logs' logs\service -ErrorAction SilentlyContinue
+          Get-ChildItem C:\NOMADData\engine\containers -Recurse -Filter container.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName ("logs\app-" + $_.Directory.Name.Substring(0,12) + ".log")
+          }
+          Get-ChildItem -Recurse logs | Select-Object FullName, Length
+
+      - name: Show warnings and errors from the logs
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          foreach ($f in 'supervisor.log', 'admin.log', 'worker.log') {
+            $p = "C:\NOMADData\logs\$f"
+            if (-not (Test-Path $p)) { continue }
+            Write-Host "::group::$f (warnings and errors)"
+            Select-String -Path $p -Pattern '"level":(40|50|60)|\] (WARN|ERROR)|error:|failed' | Select-Object -Last 60 | ForEach-Object { $_.Line }
+            Write-Host '::endgroup::'
+          }
+          Get-ChildItem C:\NOMADData\engine\containers -Recurse -Filter container.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "::group::app log $($_.Directory.Name.Substring(0,12))"
+            Get-Content $_.FullName -Tail 30
+            Write-Host '::endgroup::'
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-logs
+          path: logs
+          retention-days: 14
+
+      - name: Silent uninstall keeps user data
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          (Start-Process 'C:\Program Files\Project NOMAD\Uninstall Project NOMAD.exe' -ArgumentList '/S' -PassThru).WaitForExit()
+          # NSIS runs the real uninstaller from a temporary copy (%TEMP%\~nsu*.tmp); follow that one.
+          $un = { @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*\~nsu*' }) }
+          for ($i = 1; (& $un).Count -and $i -le 600; $i++) {
+            if ($i % 30 -eq 0) {
+              Write-Host "[$([int]$sw.Elapsed.TotalSeconds)s] uninstalling; service: $((Get-Service ProjectNOMAD -ErrorAction SilentlyContinue).Status)"
+              $ids = (& $un).ProcessId
+              Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -in $ids } | ForEach-Object { Write-Host "    running: $($_.CommandLine)" }
+            }
+            Start-Sleep 1
+          }
+          for ($i = 0; $i -lt 60 -and (Test-Path 'C:\Program Files\Project NOMAD\service'); $i++) { Start-Sleep 2 }
+          Write-Host "Uninstaller finished after $([int]$sw.Elapsed.TotalSeconds)s"
+          if ((& $un).Count) { throw 'uninstaller still running after 10 minutes' }
+          if (Get-Service ProjectNOMAD -ErrorAction SilentlyContinue) { throw 'service still registered' }
+          if (Test-Path 'C:\Program Files\Project NOMAD\service') { throw 'program files not removed' }
+          if (-not (Test-Path 'C:\NOMADData\storage\zim')) { throw 'user data was deleted' }
+          $left = Get-Process | Where-Object { $_.Path -like 'C:\Program Files\Project NOMAD\*' -or $_.Path -like 'C:\NOMADData\engine\*' }
+          if ($left) { $left | Format-Table Id, Path; throw 'processes still running after uninstall' }
+          Write-Host 'Uninstalled cleanly; data folder kept.'
+
+  release:
+    name: Publish release
+    needs: [build, smoke-test]
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProjectNOMAD-Windows-Setup
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('windows-v{0}', needs.build.outputs.version) }}
+          # A new tag (manual publish) must point at the commit that was built, not the default branch.
+          target_commitish: ${{ github.sha }}
+          name: Project NOMAD ${{ needs.build.outputs.version }} for Windows
+          files: |
+            dist/ProjectNOMAD-Setup-*.exe
+            dist/ProjectNOMAD-Setup-*.exe.sha256
+          body: |
+            **Project NOMAD for Windows — no Docker required.**
+
+            1. Download `ProjectNOMAD-Setup-${{ needs.build.outputs.version }}.exe` below and run it.
+               Windows may show "Windows protected your PC" because the installer isn't code-signed: click **More info → Run anyway**.
+            2. Pick a data folder with plenty of free space (default `C:\ProjectNOMAD`).
+            3. When setup finishes, Project NOMAD opens at http://localhost:8080 — start with **Easy Setup**.
+
+            Requires 64-bit Windows 10 or 11. See `native/README.md` in the repository for details.
